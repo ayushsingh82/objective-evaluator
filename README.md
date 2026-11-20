@@ -6,6 +6,8 @@ It is a small TypeScript toolkit with **zero runtime dependencies** (Node 22.18+
 
 > **Status: MVP.** Offline-tested (24 tests), not audited, not yet run against a real chain or a real objective contract. See [What it does not prove](#what-it-does-not-prove) and [ROADMAP.md](ROADMAP.md).
 
+> **Relationship to NEAR Extents.** This is a standalone prototype with its own spec, review and signature format. It is **not** compatible with the real Extents formats. The specification the objective contract commits to (`Spec`, `Review`, RFC 8785 hashing, test vectors) lives in [`MultiAgency/extents`](https://github.com/MultiAgency/extents), in `crates/spec`, and its evaluator is in `app/src/server`. Use those for anything real. This repository is kept as an experiment: the ideas it explores (judge allowlists, replay binding, an M-of-N evaluator committee) are described in [ROADMAP.md](ROADMAP.md), and several of them are already covered by the Extents design.
+
 ---
 
 ## The problem
