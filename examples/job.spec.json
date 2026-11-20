@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "title": "Launch the event landing page",
+  "deadline": "2026-12-31T00:00:00Z",
+  "checks": [
+    {
+      "id": "site-live",
+      "type": "url_up",
+      "contains": "Example Domain"
+    },
+    {
+      "id": "code-merged",
+      "type": "github_pr_merged",
+      "repo": "MultiAgency/product-board"
+    },
+    {
+      "id": "ci-green",
+      "type": "github_checks_pass",
+      "repo": "MultiAgency/product-board",
+      "names": [
+        "test"
+      ]
+    },
+    {
+      "id": "logo-delivered",
+      "type": "file_hash",
+      "sha256": "a63cdff743c4191c3f7c6dbc873f77a8e7a6a27e3b49b008c59051b090fe9a23"
+    },
+    {
+      "id": "design-quality",
+      "type": "manual",
+      "question": "Does the page match the agreed design brief?"
+    },
+    {
+      "id": "bonus-copy",
+      "type": "manual",
+      "question": "Is the copy proofread?",
+      "required": false
+    }
+  ],
+  "judges": [
+    "city-node.dao"
+  ]
+}
