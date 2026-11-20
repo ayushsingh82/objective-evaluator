@@ -1,0 +1,13 @@
+{
+  "name": "objective-evaluator",
+  "version": "0.1.0",
+  "description": "Evaluates a measurable job spec against evidence and emits a signed, re-verifiable verdict hash (for NEAR Extents-style objectives).",
+  "type": "module",
+  "bin": { "objective-evaluator": "src/cli.js" },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "demo": "node src/cli.js demo"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}
