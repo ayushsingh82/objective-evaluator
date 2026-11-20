@@ -1,23 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, symlinkSync } from "node:fs";
+import { createPrivateKey, sign } from "node:crypto";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { evaluate, generateEvaluatorKey } from "../src/evaluate.js";
-import { sha256Hex } from "../src/canonical.js";
-import { specHash, validateSpec } from "../src/spec.js";
-import { verifyReview } from "../src/verify.js";
-import { assertPublicHttps } from "../src/checks.js";
+import { evaluate, generateEvaluatorKey } from "../src/evaluate.ts";
+import { hashJson, sha256Hex } from "../src/canonical.ts";
+import { validateSpec } from "../src/spec.ts";
+import { verifyReview } from "../src/verify.ts";
+import { assertPublicHttps } from "../src/checks.ts";
+import type { EvaluateOptions, Evidence, FetchInit, FetchLike, ReviewBody, Spec } from "../src/types.ts";
+import { makeEvidence, makeSpec, okFetch, reply } from "./helpers.ts";
 
 const key = generateEvaluatorKey();
 const dir = mkdtempSync(path.join(tmpdir(), "oe-"));
 writeFileSync(path.join(dir, "deliverable.txt"), "the deliverable");
 const DELIVERABLE = sha256Hex("the deliverable");
 
-const makeSpec = (checks, deadline = "2026-12-31T00:00:00Z") => ({ version: 1, title: "t", deadline, checks });
-const makeEvidence = (spec, items, submittedAt = "2026-12-01T00:00:00Z") => ({ specHash: specHash(spec), submittedAt, items });
-const okFetch = (body = "hello world") => async () => ({ ok: true, status: 200, text: async () => body, json: async () => ({}) });
-const run = (spec, evidence, extra = {}) => evaluate(spec, evidence, { privateKey: key.privateKey, fetch: okFetch(), baseDir: dir, ...extra });
+const run = (spec: Spec, evidence: Evidence, extra: Partial<EvaluateOptions> = {}) =>
+  evaluate(spec, evidence, { privateKey: key.privateKey, fetch: okFetch(), baseDir: dir, ...extra });
 
 test("achieved when every required check passes, and the review verifies", async () => {
   const spec = makeSpec([{ id: "file", type: "file_hash", sha256: DELIVERABLE }, { id: "site", type: "url_up", contains: "hello" }]);
@@ -45,7 +46,7 @@ test("manual checks wait for a judgment instead of passing silently", async () =
   assert.equal((await run(spec, evidence)).body.verdict, "needs_judgment");
   const judged = await run(spec, evidence, { judgments: { q: { pass: true, by: "dao" } } });
   assert.equal(judged.body.verdict, "achieved");
-  const malformed = await run(spec, evidence, { judgments: { q: { pass: "yes" } } });
+  const malformed = await run(spec, evidence, { judgments: { q: { pass: "yes" } as never } });
   assert.equal(malformed.body.verdict, "partial"); // machine check passed, the malformed judgment failed
 });
 
@@ -71,7 +72,7 @@ test("tampered evidence, tampered verdict and a forged signature all fail verifi
   const review = await run(spec, evidence);
   assert.equal(review.body.verdict, "not_achieved");
 
-  const editedEvidence = { ...evidence, items: { file: { path: "other.txt" } } };
+  const editedEvidence: Evidence = { ...evidence, items: { file: { path: "other.txt" } } };
   assert.match(verifyReview(review, spec, editedEvidence).problems.join("\n"), /different evidence/);
 
   const bumped = structuredClone(review);
@@ -95,7 +96,7 @@ test("late evidence is not_achieved and no checks run", async () => {
   let called = false;
   const spec = makeSpec([{ id: "site", type: "url_up" }], "2026-12-01T00:00:00Z");
   const evidence = makeEvidence(spec, { site: { url: "https://example.org" } }, "2026-12-02T00:00:00Z");
-  const review = await run(spec, evidence, { fetch: async () => { called = true; return { ok: true, status: 200 }; } });
+  const review = await run(spec, evidence, { fetch: async () => { called = true; return reply(); } });
   assert.equal(review.body.verdict, "not_achieved");
   assert.equal(review.body.late, true);
   assert.equal(called, false);
@@ -107,14 +108,14 @@ test("late evidence is not_achieved and no checks run", async () => {
   assert.equal(verifyReview(lie, spec, evidence).ok, false);
 });
 
-test("file_hash refuses path traversal and symlink-free escapes", async () => {
+test("file_hash refuses path traversal and absolute paths", async () => {
   const spec = makeSpec([{ id: "file", type: "file_hash", sha256: DELIVERABLE }]);
   const evidence = makeEvidence(spec, { file: { path: "../../../etc/passwd" } });
   const review = await run(spec, evidence);
-  assert.equal(review.body.results[0].status, "fail");
-  assert.match(review.body.results[0].detail, /escapes/);
+  assert.equal(review.body.results[0]?.status, "fail");
+  assert.match(review.body.results[0]?.detail ?? "", /escapes/);
   const abs = makeEvidence(spec, { file: { path: "/etc/passwd" } });
-  assert.match((await run(spec, abs)).body.results[0].detail, /escapes/);
+  assert.match((await run(spec, abs)).body.results[0]?.detail ?? "", /escapes/);
 });
 
 test("file_hash refuses a symlink that points outside the evidence directory", async () => {
@@ -123,13 +124,13 @@ test("file_hash refuses a symlink that points outside the evidence directory", a
   symlinkSync(path.join(outside, "secret.txt"), path.join(dir, "link.txt"));
   const spec = makeSpec([{ id: "file", type: "file_hash", sha256: DELIVERABLE }]);
   const review = await run(spec, makeEvidence(spec, { file: { path: "link.txt" } }));
-  assert.equal(review.body.results[0].status, "fail");
-  assert.match(review.body.results[0].detail, /escapes/);
+  assert.equal(review.body.results[0]?.status, "fail");
+  assert.match(review.body.results[0]?.detail ?? "", /escapes/);
 });
 
-test("url_up blocks private hosts, credentials and plain http", async () => {
+test("url_up blocks private hosts, credentials and plain http", () => {
   for (const url of ["http://example.org", "https://localhost/x", "https://127.0.0.1/", "https://10.0.0.5/", "https://169.254.169.254/latest", "https://user:pw@example.org/", "file:///etc/passwd", "https://[::1]/"]) {
-    assert.throws(() => assertPublicHttps(url), undefined, url);
+    assert.throws(() => assertPublicHttps(url), Error, url);
   }
   assert.doesNotThrow(() => assertPublicHttps("https://example.org/path"));
 });
@@ -137,16 +138,17 @@ test("url_up blocks private hosts, credentials and plain http", async () => {
 test("url_up never follows redirects and fails on non-2xx", async () => {
   const spec = makeSpec([{ id: "site", type: "url_up" }]);
   const evidence = makeEvidence(spec, { site: { url: "https://example.org" } });
-  let seen;
-  const review = await run(spec, evidence, { fetch: async (u, init) => { seen = init; return { ok: false, status: 302 }; } });
-  assert.equal(seen.redirect, "manual");
-  assert.equal(review.body.results[0].status, "fail");
+  let seen = undefined as FetchInit | undefined;
+  const fetchStub: FetchLike = async (_url, init) => { seen = init; return reply({ ok: false, status: 302 }); };
+  const review = await run(spec, evidence, { fetch: fetchStub });
+  assert.equal(seen?.redirect, "manual");
+  assert.equal(review.body.results[0]?.status, "fail");
 });
 
 test("github_pr_merged requires a merge before the deadline", async () => {
   const spec = makeSpec([{ id: "pr", type: "github_pr_merged", repo: "o/r" }], "2026-12-01T00:00:00Z");
   const evidence = makeEvidence(spec, { pr: { pr: 5 } });
-  const pr = merged_at => async () => ({ ok: true, status: 200, json: async () => ({ merged: Boolean(merged_at), merged_at }) });
+  const pr = (mergedAt: string | null): FetchLike => async () => reply({ json: async () => ({ merged: Boolean(mergedAt), merged_at: mergedAt }) });
   assert.equal((await run(spec, evidence, { fetch: pr("2026-11-30T00:00:00Z") })).body.verdict, "achieved");
   assert.equal((await run(spec, evidence, { fetch: pr("2026-12-02T00:00:00Z") })).body.verdict, "not_achieved");
   assert.equal((await run(spec, evidence, { fetch: pr(null) })).body.verdict, "not_achieved");
@@ -168,10 +170,7 @@ test("results that do not match the spec's checks are rejected by the verifier",
   const review = await run(spec, evidence);
   assert.equal(review.body.verdict, "needs_judgment");
   // Drop the unresolved check and re-sign with the real key: must still fail.
-  const trimmed = { ...review.body, results: review.body.results.filter(r => r.id === "file") };
-  trimmed.verdict = "achieved";
-  const { hashJson } = await import("../src/canonical.js");
-  const { sign, createPrivateKey } = await import("node:crypto");
+  const trimmed: ReviewBody = { ...review.body, results: review.body.results.filter(r => r.id === "file"), verdict: "achieved" };
   const reviewHash = hashJson(trimmed);
   const signature = sign(null, Buffer.from(reviewHash, "utf8"), createPrivateKey(key.privateKey)).toString("hex");
   const result = verifyReview({ body: trimmed, reviewHash, signature }, spec, evidence);

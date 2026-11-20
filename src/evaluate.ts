@@ -1,24 +1,25 @@
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { hashJson } from "./canonical.js";
-import { RUNNERS } from "./checks.js";
-import { specHash, validateSpec } from "./spec.js";
+import { hashJson } from "./canonical.ts";
+import { runCheck } from "./checks.ts";
+import { specHash, validateSpec } from "./spec.ts";
+import type { CheckContext, CheckResult, EvaluateOptions, EvaluatorKey, Evidence, Review, ReviewBody, Spec, Verdict } from "./types.ts";
 
-export function generateEvaluatorKey() {
+export function generateEvaluatorKey(): EvaluatorKey {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   return {
     publicKey: publicKey.export({ format: "der", type: "spki" }).toString("hex"),
-    privateKey: privateKey.export({ format: "pem", type: "pkcs8" }),
+    privateKey: privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
   };
 }
 
-export const publicKeyOf = privateKeyPem =>
+export const publicKeyOf = (privateKeyPem: string): string =>
   createPublicKey(createPrivateKey(privateKeyPem)).export({ format: "der", type: "spki" }).toString("hex");
 
 /**
  * Verdict is a pure function of the spec's required checks and the results, so a
  * verifier can recompute it instead of trusting the evaluator's word.
  */
-export function deriveVerdict(spec, results, late) {
+export function deriveVerdict(spec: Spec, results: CheckResult[], late: boolean): Verdict {
   if (late) return "not_achieved";
   const required = new Set(spec.checks.filter(c => c.required !== false).map(c => c.id));
   const mine = results.filter(r => required.has(r.id));
@@ -28,13 +29,12 @@ export function deriveVerdict(spec, results, late) {
 }
 
 /**
- * evidence: { specHash, submittedAt, items: { [checkId]: {...} } }
- * options:  { privateKey (PEM), fetch, baseDir, judgments, now, githubToken, allowHttp }
- * Returns   { body, reviewHash, signature }. reviewHash is what goes on-chain.
+ * Runs every check and signs the review. `reviewHash` is what goes on-chain.
+ * Evidence is `{ specHash, submittedAt, items: { [checkId]: {...} } }`.
  */
-export async function evaluate(spec, evidence, options) {
+export async function evaluate(spec: Spec, evidence: Evidence, options: EvaluateOptions): Promise<Review> {
   validateSpec(spec);
-  const { privateKey, fetch: fetchImpl = globalThis.fetch, now = () => new Date() } = options ?? {};
+  const { privateKey, fetch: fetchImpl = globalThis.fetch as unknown as CheckContext["fetch"], now = () => new Date() } = options ?? {};
   if (!privateKey) throw new Error("a privateKey is required to sign the review");
 
   const sHash = specHash(spec);
@@ -46,7 +46,7 @@ export async function evaluate(spec, evidence, options) {
   const deadlineMs = Date.parse(spec.deadline);
   const late = submittedMs > deadlineMs;
 
-  const ctx = {
+  const ctx: CheckContext = {
     fetch: fetchImpl,
     baseDir: options.baseDir,
     judgments: options.judgments ?? {},
@@ -57,19 +57,18 @@ export async function evaluate(spec, evidence, options) {
   };
 
   const binding = options.binding ?? null;
-  if (binding !== null && !(binding && typeof binding === "object" && Object.values(binding).every(v => typeof v === "string" || typeof v === "number"))) {
+  if (binding !== null && !(typeof binding === "object" && Object.values(binding).every(v => typeof v === "string" || typeof v === "number"))) {
     throw new Error("binding must be a flat object of strings and numbers, e.g. { chainId, objective, nonce }");
   }
 
-  const results = [];
+  const results: CheckResult[] = [];
   for (const check of spec.checks) {
     const base = { id: check.id, type: check.type, required: check.required !== false };
     if (late) { results.push({ ...base, status: "skipped", detail: "evidence submitted after the deadline" }); continue; }
-    const out = await RUNNERS[check.type](check, evidence.items?.[check.id], ctx);
-    results.push({ ...base, ...out });
+    results.push({ ...base, ...(await runCheck(check, evidence.items?.[check.id], ctx)) });
   }
 
-  const body = {
+  const body: ReviewBody = {
     version: 1,
     specHash: sHash,
     evidenceHash: hashJson(evidence),

@@ -1,8 +1,10 @@
+import type { CommitteeVerdict, EscrowAction } from "./types.ts";
+
 // Maps an evaluator outcome to the shape an ERC-8183-style job escrow expects:
 // the evaluator either completes the job (pay the provider) or rejects it (refund the
 // client), with a 32-byte reason. This module only translates; it does not talk to a chain.
 
-const ACTIONS = {
+const ACTIONS: Record<CommitteeVerdict, Omit<EscrowAction, "reason">> = {
   achieved: { action: "complete" },
   not_achieved: { action: "reject" },
   // Escrows of this kind are binary. A partial result should be modelled as milestone sub-objectives;
@@ -12,9 +14,9 @@ const ACTIONS = {
   no_quorum: { action: "hold", note: "evaluators did not reach the threshold" },
 };
 
-/** `reasonHash` is the review's reviewHash, or a committee commitment. */
-export function toEscrowAction(verdict, reasonHash) {
-  const base = ACTIONS[verdict];
+/** `reasonHash` is the review's `reviewHash`, or a committee commitment. */
+export function toEscrowAction(verdict: string, reasonHash: string): EscrowAction {
+  const base = (ACTIONS as Record<string, Omit<EscrowAction, "reason"> | undefined>)[verdict];
   if (!base) throw new Error(`unknown verdict ${verdict}`);
   if (!/^[0-9a-f]{64}$/.test(reasonHash ?? "")) throw new Error("reasonHash must be 64 lowercase hex characters");
   return { ...base, reason: `0x${reasonHash}` };

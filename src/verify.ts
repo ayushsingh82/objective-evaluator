@@ -1,10 +1,12 @@
 import { createPublicKey, verify } from "node:crypto";
-import { hashJson } from "./canonical.js";
-import { deriveVerdict } from "./evaluate.js";
-import { specHash, validateSpec } from "./spec.js";
+import { hashJson } from "./canonical.ts";
+import { deriveVerdict } from "./evaluate.ts";
+import { specHash, validateSpec } from "./spec.ts";
+import type { Evidence, Review, Spec, VerifyOptions, VerifyResult } from "./types.ts";
+import { errorMessage } from "./util.ts";
 
 /** True once the challenge window after evaluation has passed (a contract should finalize only then). */
-export function isFinal(review, { challengeSeconds, now = new Date() }) {
+export function isFinal(review: Review, { challengeSeconds, now = new Date() }: { challengeSeconds: number; now?: Date }): boolean {
   if (!Number.isFinite(challengeSeconds) || challengeSeconds < 0) throw new Error("challengeSeconds must be a non-negative number");
   return now.getTime() >= Date.parse(review.body.evaluatedAt) + challengeSeconds * 1000;
 }
@@ -15,14 +17,15 @@ export function isFinal(review, { challengeSeconds, now = new Date() }) {
  * the live world); it proves the review is internally consistent, bound to this
  * exact spec and evidence, correctly signed, and that the verdict follows from
  * the recorded results.
- * options.trustedEvaluators: if given, body.evaluator must be one of these.
- * options.binding: if given ({ chainId, objective, nonce }...), the review must have been made for exactly this
- *   binding, so a review for one objective cannot be replayed on another.
- * options.graceSeconds: if given, evaluation must happen no later than deadline + grace (late attestations are refused).
+ *
+ * - `trustedEvaluators`: if given, `body.evaluator` must be one of these.
+ * - `binding`: if given, the review must have been made for exactly this binding,
+ *   so a review for one objective cannot be replayed on another.
+ * - `graceSeconds`: if given, evaluation must happen no later than deadline + grace.
  */
-export function verifyReview(review, spec, evidence, options = {}) {
-  const problems = [];
-  const fail = message => problems.push(message);
+export function verifyReview(review: Review, spec: Spec, evidence: Evidence, options: VerifyOptions = {}): VerifyResult {
+  const problems: string[] = [];
+  const fail = (message: string) => { problems.push(message); };
   try {
     validateSpec(spec);
     const body = review?.body;
@@ -67,7 +70,7 @@ export function verifyReview(review, spec, evidence, options = {}) {
       fail("verdict does not follow from the recorded results");
     }
   } catch (e) {
-    fail(e.message);
+    fail(errorMessage(e));
   }
   return { ok: problems.length === 0, problems };
 }

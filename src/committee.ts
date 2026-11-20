@@ -1,18 +1,17 @@
-import { hashJson } from "./canonical.js";
-import { verifyReview } from "./verify.js";
+import { hashJson } from "./canonical.ts";
+import type { CommitteeOptions, CommitteeResult, CommitteeVerdict, Evidence, Review, Spec, Verdict } from "./types.ts";
+import { verifyReview } from "./verify.ts";
 
-const FINAL = ["achieved", "partial", "not_achieved"];
+const FINAL: readonly Verdict[] = ["achieved", "partial", "not_achieved"];
 
 /**
  * M-of-N evaluation: several independent evaluators each sign their own review of the
  * same spec and evidence; the committee verdict is the final verdict at least
  * `threshold` distinct, trusted evaluators agree on. One bribed or broken evaluator
  * cannot decide the outcome alone.
- *
- * options: { trustedEvaluators (required), threshold (default: strict majority of trusted), ...verifyReview options }
  */
-export function verifyCommittee(reviews, spec, evidence, options = {}) {
-  const { trustedEvaluators, threshold: requested, ...verifyOptions } = options;
+export function verifyCommittee(reviews: Review[], spec: Spec, evidence: Evidence, options: CommitteeOptions): CommitteeResult {
+  const { trustedEvaluators, threshold: requested, ...verifyOptions } = options ?? {};
   if (!Array.isArray(trustedEvaluators) || trustedEvaluators.length === 0) {
     throw new Error("a committee needs a non-empty trustedEvaluators list");
   }
@@ -24,9 +23,9 @@ export function verifyCommittee(reviews, spec, evidence, options = {}) {
     throw new Error("threshold must be a strict majority, or two verdicts could both reach quorum");
   }
 
-  const seen = new Set();
-  const rejected = [];
-  const votes = new Map(); // verdict -> [{ evaluator, reviewHash }]
+  const seen = new Set<string>();
+  const rejected: CommitteeResult["rejected"] = [];
+  const votes = new Map<Verdict, Array<{ evaluator: string; reviewHash: string }>>();
   for (const review of reviews) {
     const evaluator = review?.body?.evaluator ?? "unknown";
     const result = verifyReview(review, spec, evidence, { ...verifyOptions, trustedEvaluators });
@@ -34,12 +33,13 @@ export function verifyCommittee(reviews, spec, evidence, options = {}) {
     if (seen.has(evaluator)) { rejected.push({ evaluator, problems: ["duplicate review from the same evaluator"] }); continue; }
     seen.add(evaluator);
     if (!FINAL.includes(review.body.verdict)) { rejected.push({ evaluator, problems: [`verdict ${review.body.verdict} is not a vote`] }); continue; }
-    if (!votes.has(review.body.verdict)) votes.set(review.body.verdict, []);
-    votes.get(review.body.verdict).push({ evaluator, reviewHash: review.reviewHash });
+    const list = votes.get(review.body.verdict) ?? [];
+    list.push({ evaluator, reviewHash: review.reviewHash });
+    votes.set(review.body.verdict, list);
   }
 
-  let verdict = "no_quorum";
-  let agreeing = [];
+  let verdict: CommitteeVerdict = "no_quorum";
+  let agreeing: Array<{ evaluator: string; reviewHash: string }> = [];
   for (const [candidate, list] of votes) {
     if (list.length >= threshold) { verdict = candidate; agreeing = list; }
   }
