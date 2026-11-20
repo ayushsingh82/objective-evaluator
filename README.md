@@ -2,7 +2,7 @@
 
 **Pay for work only after it is verified.** `objective-evaluator` turns a job's *measurable spec* and the contributors' *evidence* into a **signed verdict** whose hash anyone can re-verify, so an escrow or DAO can release funds on a decision it can check instead of one it has to trust.
 
-It is a small, dependency-free toolkit (Node 20+) built for escrowed objectives such as NEAR Extents-style contracts, where a contract can hold funds and record a hash, but cannot see the real world.
+It is a small TypeScript toolkit with **zero runtime dependencies** (Node 22.18+), built for escrowed objectives such as NEAR Extents-style contracts, where a contract can hold funds and record a hash, but cannot see the real world.
 
 > **Status: MVP.** Offline-tested (24 tests), not audited, not yet run against a real chain or a real objective contract. See [What it does not prove](#what-it-does-not-prove) and [ROADMAP.md](ROADMAP.md).
 
@@ -61,9 +61,14 @@ An escrowed job has three roles: a sponsor who funds it, a contributor who deliv
 ```sh
 git clone https://github.com/ayushsingh82/objective-evaluator.git
 cd objective-evaluator
-npm test           # 24 tests, no dependencies to install
+npm install        # dev dependencies only: typescript and @types/node
+npm run typecheck  # strict TypeScript, no emit
+npm test           # 24 tests, run directly on the .ts files
 npm run demo       # a full run with the network stubbed
+npm run build      # emits dist/ (JavaScript + .d.ts) for use as a package
 ```
+
+Node 22.18 or newer runs the TypeScript sources directly by stripping types, so no build step is needed to try it. `npm run build` produces plain JavaScript and declaration files for consumers.
 
 The demo evaluates a sample job and then tries to verify the same review against a spec that was edited afterwards:
 
@@ -112,25 +117,25 @@ verify (spec swapped after the fact): {"ok":false,"problems":["review is for a d
 ## Command line
 
 ```sh
-node src/cli.js keygen --out key.json
-node src/cli.js hash-spec examples/job.spec.json
+node src/cli.ts keygen --out key.json
+node src/cli.ts hash-spec examples/job.spec.json
 
-node src/cli.js evaluate \
+node src/cli.ts evaluate \
   --spec spec.json --evidence evidence.json --key key.json --out review.json \
   [--base-dir ./files] [--judgments judgments.json] [--binding binding.json]
 
-node src/cli.js verify \
+node src/cli.ts verify \
   --review review.json --spec spec.json --evidence evidence.json \
   [--trust <evaluator public key>] [--binding binding.json] [--grace 3600] [--challenge 600]
 
-node src/cli.js committee \
+node src/cli.ts committee \
   --reviews a.json,b.json,c.json --spec spec.json --evidence evidence.json \
   --trust key1,key2,key3 [--threshold 2]
 
-node src/cli.js export-escrow --review review.json
+node src/cli.ts export-escrow --review review.json
 ```
 
-Set `GITHUB_TOKEN` to avoid GitHub's anonymous rate limit. The evidence file looks like this:
+After `npm run build` the same commands are available as `objective-evaluator <command>` (the `bin` entry). Set `GITHUB_TOKEN` to avoid GitHub's anonymous rate limit. The evidence file looks like this:
 
 ```json
 {
@@ -146,12 +151,14 @@ Set `GITHUB_TOKEN` to avoid GitHub's anonymous rate limit. The evidence file loo
 
 ## Library
 
-```js
-import { evaluate, generateEvaluatorKey } from "./src/evaluate.js";
-import { verifyReview } from "./src/verify.js";
-import { verifyCommittee } from "./src/committee.js";
-import { toEscrowAction } from "./src/erc8183.js";
-import { specHash } from "./src/spec.js";
+```ts
+import {
+  evaluate, generateEvaluatorKey, specHash, toEscrowAction, verifyCommittee, verifyReview,
+  type Evidence, type Spec,
+} from "objective-evaluator";
+
+const spec: Spec = { /* see "A spec" above */ } as Spec;
+const evidence: Evidence = { specHash: specHash(spec), submittedAt: "2026-12-01T10:00:00Z", items: {} };
 
 const key = generateEvaluatorKey();                     // { publicKey, privateKey }
 const review = await evaluate(spec, evidence, {
@@ -193,21 +200,37 @@ Known limits: `url_up` blocks private hostnames by name and literal IP only and 
 
 The full list of what can and cannot be done is in [ROADMAP.md](ROADMAP.md).
 
+## Types
+
+Everything public is typed in [`src/types.ts`](src/types.ts) and re-exported from the package root. Check types are a discriminated union, so a spec that uses a field the check type does not have fails to compile, and the check runner switch is exhaustive: adding a check type without a runner is a compile error.
+
+```ts
+type Check = UrlUpCheck | GithubPrMergedCheck | GithubChecksPassCheck | FileHashCheck | ManualCheck;
+type Verdict = "achieved" | "partial" | "not_achieved" | "needs_judgment";
+```
+
+The project compiles with `strict`, `noUnusedLocals`, `noUnusedParameters`, `verbatimModuleSyntax` and `erasableSyntaxOnly`. Untrusted input (spec JSON, evidence, judgments, remote API responses) is typed as `unknown` or validated at runtime before it is used.
+
 ## Project layout
 
 ```
 objective-evaluator/
 ├── src/
-│   ├── canonical.js    deterministic JSON and sha256
-│   ├── spec.js         spec validation and specHash
-│   ├── checks.js       check runners and the URL, path and symlink guards
-│   ├── evaluate.js     evaluate(), deriveVerdict(), key helpers
-│   ├── verify.js       verifyReview(), isFinal()
-│   ├── committee.js    M-of-N committee verification
-│   ├── erc8183.js      verdict to complete / reject / hold
-│   └── cli.js          keygen, hash-spec, evaluate, verify, committee, export-escrow, demo
+│   ├── types.ts        public types
+│   ├── util.ts         small helpers
+│   ├── canonical.ts    deterministic JSON and sha256
+│   ├── spec.ts         spec validation (type guard) and specHash
+│   ├── checks.ts       check runners and the URL, path and symlink guards
+│   ├── evaluate.ts     evaluate(), deriveVerdict(), key helpers
+│   ├── verify.ts       verifyReview(), isFinal()
+│   ├── committee.ts    M-of-N committee verification
+│   ├── erc8183.ts      verdict to complete / reject / hold
+│   ├── index.ts        public entry point
+│   └── cli.ts          keygen, hash-spec, evaluate, verify, committee, export-escrow, demo
 ├── test/               24 tests, including the attack cases
 ├── examples/           a sample job spec and evidence file
+├── tsconfig.json       strict type checking (src and test)
+├── tsconfig.build.json emits dist/
 ├── ROADMAP.md          what is done, what is next, what cannot be done
 └── LICENSE
 ```
@@ -215,7 +238,7 @@ objective-evaluator/
 ## Testing
 
 ```sh
-npm test
+npm run typecheck && npm test
 ```
 
 The suite covers a swapped spec, edited evidence, a forged signature, a re-signed review that omits a check, late evidence, path traversal and symlink escape, SSRF targets, replay across objectives, late attestations, the challenge window, committee quorum with duplicate and sybil members, judge allowlists, and CI checks. The network is stubbed, so the tests run offline.
