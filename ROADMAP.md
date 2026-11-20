@@ -94,3 +94,72 @@ Be direct about these; they should not be promised in a pitch.
 - Replacing the contract or the DAO's judgment.
 - Deciding quality with an AI model alone.
 - Becoming a general oracle network.
+
+## 7. More improvements (round two)
+
+Additions beyond section 2. Each names the gap it closes. Items in 7.1 are small and should come first.
+
+### 7.1 Repo hygiene and release (do first, cheap)
+
+1. **CI.** There is no CI yet. Add a GitHub Actions workflow that runs `npm ci`, `npm run typecheck`, `npm test` and `npm run build` on every push and pull request, on Node 22 and the current LTS. Gap: nothing stops a broken commit from landing.
+2. **SECURITY.md.** How to report a vulnerability, what is in scope, and the "not audited" statement. Gap: a security tool with no disclosure path.
+3. **CONTRIBUTING.md, issue and PR templates, CHANGELOG.md.** Gap: outside contributors cannot tell how to help or what changed.
+4. **Dependabot and CodeQL.** Gap: dev dependencies and code patterns are not watched.
+5. **Tagged release and npm publish with provenance.** Publish `v0.1.0` from CI with npm provenance, so a consumer can check which commit built the package. Gap: today the only install path is cloning.
+
+### 7.2 Formats and interoperability
+
+6. **Published test vectors.** A `vectors/` folder of JSON files (spec, evidence, expected `specHash`, `reviewHash`, verdict, and bad cases that must fail), so a second implementation in Rust or AssemblyScript can prove it agrees. Gap: the hash format exists only as this code.
+7. **Check canonical JSON against RFC 8785 (JCS).** The current canonicalization sorts keys by UTF-16 code unit and uses `JSON.stringify` for strings and numbers, which should match JCS for ordinary data. Run the RFC's test vectors and document any difference (for example lone surrogates). Gap: a hash another language cannot reproduce is useless on-chain.
+8. **NEAR-native keys and signing.** Today the evaluator key is a raw Ed25519 key in SPKI hex. Add the `ed25519:<base58>` public key format and a NEP-413-style signed message, and verify that the signer is an access key of a named NEAR account. Gap: the evaluator is not yet tied to an account people can recognise.
+9. **A written format spec.** One document (`docs/format.md`) defining the spec, evidence, review body, hashing and signature, with a sequence diagram. This also answers `product-board` #23 ("write the spec for review"). Gap: reviewers must read code to learn the format.
+10. **Bundle export.** `export-bundle` writes one folder with the spec, evidence, review and the recorded raw responses, plus a manifest of hashes, so a third party can verify offline.
+
+### 7.3 Evidence integrity
+
+11. **Signed evidence.** Contributors sign their evidence submission with their own key, so the review shows who submitted what, and nobody can submit evidence in someone else's name. Gap: evidence has no author.
+12. **Record what the evaluator saw.** Store a digest of each remote response (the GitHub JSON, the page body) in the review. A later dispute can then compare against what was actually fetched. Gap: a result that depended on a live fetch cannot be audited afterwards.
+13. **Pagination and size limits.** `github_checks_pass` fails closed above 100 check runs; add pagination with a cap. Add response-size limits and a per-run time budget for every network check. Gap: large repos fail and hostile servers can stall a run.
+14. **Rate-limit and retry behaviour.** Back off on GitHub rate limits, distinguish "could not check" from "failed", and never turn a network error into a silent pass. Gap: today an outage looks like a failed check.
+
+### 7.4 A richer spec language
+
+15. **Weights and thresholds.** Let a spec say "at least 3 of these 4 checks" or give checks weights, and compute a **payout ratio** deterministically from the results. Export it as `releaseBps` for an escrow that supports partial release. Gap: `partial` currently maps to a refusal.
+16. **Spec templates.** Reusable specs for common jobs (landing page, event, code delivery, audit report) with the checks pre-filled. Gap: writing a measurable spec from nothing is the hard part for sponsors.
+17. **Spec linting.** Warn on vague manual questions, a deadline in the past, a single point of failure (one URL, one judge), or checks that any contributor can trivially fake. Gap: bad specs make good tooling look bad.
+18. **Check plugins.** A typed registry so new check types can be added without editing core files, with each plugin declaring its network and file access. Gap: every new check today means a core change.
+
+### 7.5 More checks
+
+Ordered by usefulness for NEAR objectives:
+
+19. `near_tx_exists`: a transfer or call happened (hash, account, amount, before the deadline).
+20. `dao_proposal_passed`: a Sputnik DAO proposal reached `Approved`.
+21. `contract_code_hash`: a deployed contract has a given code hash.
+22. `http_json`: assert fields in a JSON endpoint (a restricted path syntax, no code execution).
+23. `commit_signed_by`: a commit or tag is signed by an expected key.
+24. `npm_or_registry_published`: a package version exists with the expected digest.
+25. `content_hash_of_url`: a pinned file at a URL matches a hash (for a delivered report or design).
+
+### 7.6 Testing and assurance
+
+26. **Property-based tests.** Random specs and evidence checking that `verify` accepts every honest review and rejects every single-field mutation. Gap: the current tests are examples, not a search.
+27. **Fuzzing the parsers.** `validateSpec`, `canonicalize` and the CLI argument handling with malformed input. Gap: untrusted JSON enters here.
+28. **Mutation testing.** Confirm the tests fail when the logic is broken (for example when a comparison is flipped). Gap: 24 passing tests do not prove they would catch a regression.
+29. **An adversarial deliverable corpus.** A growing set of fake deliverables (weakened tests, copied repos, hollow pages, merged-then-reverted PRs) with a score for which ones the evaluator catches and misses. Publish the misses. Gap: nobody measures how gameable the checks are.
+30. **Differential implementation.** A small second verifier (Rust, since the contract side will likely be Rust) tested against the same vectors. Gap: one implementation can share its own blind spots.
+31. **Independent review.** A written threat model (STRIDE-style) in `docs/threat-model.md`, then an outside code review, before anything is used with real funds.
+
+### 7.7 Operations
+
+32. **A long-running evaluator service.** A small HTTP service that takes a job id, runs the evaluation on a schedule, and posts the result, with structured logs and a health endpoint. Gap: today a person runs the CLI by hand.
+33. **Key rotation and revocation records.** A published list of past and revoked evaluator keys, and a rule for how long old reviews stay valid. Gap: a leaked key has no recovery path.
+34. **Idempotent re-evaluation.** Re-running an evaluation must give the same verdict for the same recorded observations, and any difference must be reported. Gap: flaky checks can flip a verdict between runs.
+
+### 7.8 Honest limits for this round
+
+- Weights and payout ratios (15) move trust into the spec: a badly weighted spec pays the wrong amount. They need review like any contract term.
+- Signed evidence (11) proves who submitted, not that the content is true or original.
+- Recording response digests (12) helps a dispute, but a live page may have changed by the time anyone looks.
+- Adding many checks (19 to 25) raises the attack surface. Each new check needs its own tests and its own SSRF and size review before it ships.
+- None of 7.1 to 7.7 turns an MVP into something safe for real funds. Item 31 is the gate.
