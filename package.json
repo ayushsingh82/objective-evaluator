@@ -3,9 +3,24 @@
   "version": "0.1.0",
   "description": "Evaluates a measurable job spec against evidence and emits a signed, re-verifiable verdict hash (for NEAR Extents-style objectives).",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "objective-evaluator": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "examples",
+    "README.md",
+    "ROADMAP.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc",
